@@ -1,0 +1,99 @@
+local Players = game:GetService("Players")
+local RunService = game:GetService("RunService")
+local ServerScriptService = game:GetService("ServerScriptService")
+local Packages = ServerScriptService:FindFirstChild("Packages")
+
+local Shared = require(script.Parent:FindFirstChild("Shared"))
+
+local ReplicaService, ProfileService = nil, nil
+local ReplicaProfile = nil
+
+local DataInitialized = false
+
+local ProfileTemplate = {
+	Health = 100,
+	Stamina = 100,
+	RegenDelay = 10,
+
+	WalkSpeed = 12,
+	RunSpeed = 20,
+
+	Race = "Human",
+	FreshSpawn = true,
+}
+local DataStore = {}
+DataStore.Profiles = {}
+
+
+function DataStore:ReturnValidProfile(Profile)
+	if not Profile:IsDescendantOf(Players) then
+		warn("Given profile was not a descendant of players.")
+		Profile = Shared["PlayerUtil"]:GetPlayer(Profile) or nil
+	end
+	
+	Profile = self.Profiles[Profile]
+	return Profile
+end
+
+function DataStore:Init(Player)
+	if RunService:IsClient() or DataInitialized then return end
+	DataInitialized = true
+	
+	ReplicaService, ProfileService = require(Packages.ReplicaService), require(Packages.ProfileService)
+	
+	local ProfileStore = ProfileService.GetProfileStore("PlayerData", ProfileTemplate)
+	local Profile = ProfileStore.Mock:LoadProfileAsync("Player_" .. Player.UserId)
+	
+	if not Profile then Player:Kick("Profile failed to load") return end	
+	
+	Profile:AddUserId(Player.UserId)
+	Profile:Reconcile()
+	Profile:ListenToRelease(function()
+		Profile[Player] = nil
+		Player:Kick("Profile loaded on another server.")
+	end)
+	
+	if not Player:IsDescendantOf(Players) then Profile:Release() return end
+
+	ReplicaProfile = ReplicaService.NewReplica({
+		ClassToken = ReplicaService.NewClassToken("PlayerProfileReplica"),
+		Data = Profile.Data,
+		Replication = "All",
+	})	
+	
+	for Key, Value in ReplicaProfile.Data do
+		ReplicaProfile:SetValue({Key}, Value)
+	end
+	
+	self.Profiles[Player] = Profile	
+	Player:SetAttribute("ProfileLoaded", true)
+	DataInitialized = true
+	print("DataStore initialized.")
+end
+
+function DataStore:GetAllData(Player)
+	if not Player:IsDescendantOf(Players) then Player = Shared["PlayerUtil"]:GetPlayer(Player) end
+	return self.Profiles[Player]
+end
+
+function DataStore:GetData(Player, Key)
+	local Profile = self:ReturnValidProfile(Player)
+	if not Profile then return end
+	
+	--print(Profile)
+	return Profile.Data[Key]  
+end
+
+function DataStore:SetData(Player, Key, Value)
+	local Profile = self:ReturnValidProfile(Player)
+	if not Profile then return end
+	
+	Profile.Data[Key] = Value
+end
+
+function DataStore:ResetData(Player, Key)
+	print("Data reset.")
+end
+
+
+return DataStore
